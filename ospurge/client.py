@@ -32,13 +32,13 @@ import sys
 import ceilometerclient.exc
 from ceilometerclient.v2 import client as ceilometer_client
 import cinderclient
-from cinderclient.v1 import client as cinder_client
+from cinderclient.v2 import client as cinder_client
 import glanceclient.exc
 from glanceclient.v1 import client as glance_client
 from heatclient import client as heat_client
 import heatclient.openstack.common.apiclient.exceptions
 from keystoneclient import exceptions as api_exceptions
-from keystoneclient.v2_0 import client as keystone_client
+from keystoneclient.v3 import client as keystone_client
 import neutronclient.common.exceptions
 from neutronclient.v2_0 import client as neutron_client
 from novaclient import client as nova_client
@@ -105,11 +105,10 @@ class CinderResources(base.Resources):
         super(CinderResources, self).__init__(session)
         # Cinder client library can't use an existing token. When
         # using this library, we have to reauthenticate.
-        self.client = cinder_client.Client(
-            session.username, session.password,
-            session.project_name, session.auth_url, session.insecure,
-            endpoint_type=session.endpoint_type,
-            region_name=session.region_name)
+        self.client = cinder_client.Client(session.username)
+        self.client.client.auth_token = self.keystone_project_auth_token
+        self.client.client.management_url = session.get_endpoint('volumev2') \
+                .replace('None',session.project_id)
 
 
 class CinderSnapshots(CinderResources):
@@ -122,7 +121,8 @@ class CinderSnapshots(CinderResources):
         self.client.volume_snapshots.delete(snap)
 
     def resource_str(self, snap):
-        return "snapshot {} (id {})".format(snap.display_name, snap.id)
+        name = snap.display_name if hasattr(snap,'display_name') else '(none)'
+        return "snapshot {} (id {})".format(name, snap.id)
 
 
 class CinderVolumes(CinderResources):
@@ -136,7 +136,8 @@ class CinderVolumes(CinderResources):
         self.client.volumes.delete(vol)
 
     def resource_str(self, vol):
-        return "volume {} (id {})".format(vol.display_name, vol.id)
+        name = vol.display_name if hasattr(vol,'display_name') else '(none)'
+        return "volume {} (id {})".format(name, vol.id)
 
 
 class CinderBackups(CinderResources):
@@ -164,10 +165,11 @@ class NeutronResources(base.Resources):
     def __init__(self, session):
         super(NeutronResources, self).__init__(session)
         self.client = neutron_client.Client(
-            username=session.username, password=session.password,
-            tenant_id=session.project_id, auth_url=session.auth_url,
-            endpoint_type=session.endpoint_type,
-            region_name=session.region_name, insecure=session.insecure)
+            token = self.keystone_project_auth_token,
+            project_id = session.project_id,
+            endpoint_url = session.get_endpoint('network') \
+                    .replace('None', session.project_id),
+            auth_url = session.auth_url)
         self.project_id = session.project_id
 
     # This method is used for routers and interfaces removal
@@ -448,6 +450,9 @@ class NovaServers(base.Resources):
             session.project_name, auth_url=session.auth_url,
             endpoint_type=session.endpoint_type,
             region_name=session.region_name, insecure=session.insecure)
+        self.client.client.auth_token = self.keystone_project_auth_token
+        self.client.client.management_url = session.get_endpoint('compute') \
+                .replace('None',session.project_id)
         self.project_id = session.project_id
 
     """Manage nova resources"""
@@ -545,11 +550,23 @@ class KeystoneManager(object):
                  admin_role_name, **kwargs):
         self.client = keystone_client.Client(
             username=username, password=password,
-            tenant_name=project, auth_url=auth_url,
+            # tenant_name=project,
+            auth_url=auth_url,
             insecure=insecure, **kwargs)
         self.admin_role_name = admin_role_name
         self.admin_role_id = None
         self.tenant_info = None
+        self.domain_name = kwargs["domain_name"]
+        base.Resources.keystone_auth_token = self.client.auth_token
+
+    def create_project_auth_token(self,cleanup_project_id):
+        keystone_client_project = keystone_client.Client(
+                username=self.client.username,
+                password=self.client.password,
+                project_id=cleanup_project_id,
+                auth_url=self.client.auth_url)
+        base.Resources.keystone_project_auth_token = \
+            keystone_client_project.auth_token
 
     def get_project_id(self, project_name_or_id=None):
         """Get a project by its id
@@ -563,30 +580,33 @@ class KeystoneManager(object):
             return self.client.tenant_id
 
         try:
-            self.tenant_info = self.client.tenants.get(project_name_or_id)
+            self.tenant_info = self.client.projects.get(project_name_or_id)
             # If it doesn't raise an 404, project_name_or_id is
             # already the project's id
             project_id = project_name_or_id
-        except api_exceptions.NotFound:
+        # except api_exceptions.NotFound:
+        except Exception:
             try:
                 # Can raise api_exceptions.Forbidden:
-                tenants = self.client.tenants.list()
-                project_id = filter(
-                    lambda x: x.name == project_name_or_id, tenants)[0].id
+                self.domain_scoped_client = keystone_client.Client(
+                    username=self.client.username, password=self.client.password,
+                    auth_url=self.client.auth_url, domain_name=self.domain_name)
+                project_id = self.domain_scoped_client.projects.list(name=project_name_or_id)[0].id
+                self.tenant_info = self.domain_scoped_client.projects.get(project_id)
             except IndexError:
                 raise exceptions.NoSuchProject(project_name_or_id)
 
         if not self.tenant_info:
-            self.tenant_info = self.client.tenants.get(project_id)
+            self.tenant_info = self.client.projects.get(project_id)
         return project_id
 
     def enable_project(self, project_id):
         logging.info("* Enabling project {}.".format(project_id))
-        self.tenant_info = self.client.tenants.update(project_id, enabled=True)
+        self.tenant_info = self.client.projects.update(project_id, enabled=True)
 
     def disable_project(self, project_id):
         logging.info("* Disabling project {}.".format(project_id))
-        self.tenant_info = self.client.tenants.update(project_id, enabled=False)
+        self.tenant_info = self.client.projects.update(project_id, enabled=False)
 
     def get_admin_role_id(self):
         if not self.admin_role_id:
@@ -600,7 +620,7 @@ class KeystoneManager(object):
         logging.info("* Granting role admin to user {} on project {}.".format(
             user_id, project_id))
 
-        return self.client.roles.add_user_role(user_id, admin_role_id, project_id)
+	return self.client.roles.grant(role=admin_role_id, user=user_id, project=project_id)
 
     def undo_become_project_admin(self, project_id):
         user_id = self.client.user_id
@@ -608,22 +628,23 @@ class KeystoneManager(object):
         logging.info("* Removing role admin to user {} on project {}.".format(
             user_id, project_id))
 
-        return self.client.roles.remove_user_role(user_id, admin_role_id, project_id)
+        return self.client.roles.revoke(user=user_id, role=admin_role_id, project=project_id)
 
     def delete_project(self, project_id):
         logging.info("* Deleting project {}.".format(project_id))
-        self.client.tenants.delete(project_id)
+        self.client.projects.delete(project_id)
 
 
 def perform_on_project(admin_name, password, project, auth_url,
                        endpoint_type='publicURL', region_name=None,
-                       action='dump', insecure=False):
+                       action='dump', insecure=False, domain_name=None):
     """Perform provided action on all resources of project.
 
     action can be: 'purge' or 'dump'
     """
     session = base.Session(admin_name, password, project, auth_url,
-                           endpoint_type, region_name, insecure)
+                           endpoint_type, region_name, insecure,
+                           domain_name)
     error = None
     for rc in constants.RESOURCES_CLASSES:
         try:
@@ -639,17 +660,22 @@ def perform_on_project(admin_name, password, project, auth_url,
                 heatclient.openstack.common.apiclient.exceptions.EndpointNotFound,
                 exceptions.ResourceNotEnabled):
             # If service is not in Keystone's services catalog, ignoring it
+            print 'exception encountered (not found)'
             pass
+        except (exceptions.DeletionFailed, exceptions.InvalidEndpoint) as exc:
+            print "Deletion failed, but continuing on."
         except requests.exceptions.MissingSchema as e:
+            print 'exception encountered (missing schema)'
             logging.warning(
                 'Some resources may not have been deleted, "{!s}" is '
                 'improperly configured and returned: {!r}\n'.format(rc, e))
         except (ceilometerclient.exc.InvalidEndpoint, glanceclient.exc.InvalidEndpoint) as e:
+            print 'exception encountered (ceilometer thing)'
             logging.warning(
                 "Unable to connect to {} endpoint : {}".format(rc, e.message))
             error = exceptions.InvalidEndpoint(rc)
         except (neutronclient.common.exceptions.NeutronClientException):
-            # If service is not configured, ignoring it
+            print 'Skipping neutron resource'
             pass
     if error:
         raise error
@@ -707,6 +733,10 @@ def parse_args():
                              "Defaults to env[OS_TENANT_NAME].")
     parser.add_argument("--admin-role-name", required=False, default="admin",
                         help="Name of admin role. Defaults to 'admin'.")
+    parser.add_argument("--project-domain-name", action=EnvDefault,
+                        envvar='OS_PROJECT_DOMAIN_NAME', default="default",
+                        required=False,
+                        help="Domain name.  Defaults to 'default'"),
     parser.add_argument("--auth-url", action=EnvDefault,
                         envvar='OS_AUTH_URL', required=True,
                         help="Authentication URL. Defaults to "
@@ -746,10 +776,15 @@ def main():
         logging.basicConfig(level=logging.WARNING)
 
     try:
-        keystone_manager = KeystoneManager(args.username, args.password,
-                                           args.admin_project, args.auth_url,
-                                           args.insecure, region_name=args.region_name,
-                                           admin_role_name=args.admin_role_name)
+        extra_args = { 'domain_name': args.project_domain_name}
+        keystone_manager = KeystoneManager(args.username,
+                                           args.password,
+                                           args.admin_project,
+                                           args.auth_url,
+                                           args.insecure,
+                                           args.admin_role_name,
+                                           **extra_args
+                                           )
     except api_exceptions.Unauthorized as exc:
         print("Authentication failed: {}".format(str(exc)))
         sys.exit(constants.AUTHENTICATION_FAILED_ERROR_CODE)
@@ -759,6 +794,7 @@ def main():
     try:
         cleanup_project_id = keystone_manager.get_project_id(
             args.cleanup_project)
+        keystone_manager.create_project_auth_token(cleanup_project_id)
         if not args.own_project:
             try:
                 keystone_manager.become_project_admin(cleanup_project_id)
@@ -787,14 +823,16 @@ def main():
         action = "dump" if args.dry_run else "purge"
         perform_on_project(args.username, args.password, cleanup_project_id,
                            args.auth_url, args.endpoint_type, args.region_name,
-                           action, args.insecure)
+                           action, args.insecure, args.project_domain_name)
     except requests.exceptions.ConnectionError as exc:
         print("Connection error: {}".format(str(exc)))
         sys.exit(constants.CONNECTION_ERROR_CODE)
     except (exceptions.DeletionFailed, exceptions.InvalidEndpoint) as exc:
         print("Deletion of {} failed".format(str(exc)))
         print("*Warning* Some resources may not have been cleaned up")
-        sys.exit(constants.DELETION_FAILED_ERROR_CODE)
+        print("Continuing anyway.")
+    except heatclient.exc.HTTPForbidden as exc:
+        print("exception (continuing anyway): {}".format(str(exc)))
 
     if (not args.dry_run) and (not args.dont_delete_project) and (not args.own_project):
         keystone_manager.delete_project(cleanup_project_id)

@@ -62,5 +62,5 @@ NOT_AUTHORIZED_ERROR_CODE = 6
 
 # Constants
 
-RETRIES = 10  # Retry a delete operation 10 times before exiting
+RETRIES = 2   # Retry a delete operation 10 times before exiting
 TIMEOUT = 5   # 5 seconds timeout between retries

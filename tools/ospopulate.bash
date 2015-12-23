@@ -11,6 +11,8 @@ set -o pipefail
 # Check if needed environment variable OS_TENANT_NAME is set and non-empty.
 : "${OS_TENANT_NAME:?Need to set OS_TENANT_NAME non-empty}"
 
+echo "Populating project $OS_TENANT_NAME"
+
 TOP_DIR=$(cd $(dirname "$0") && pwd)
 source $TOP_DIR/utils.bash
 
@@ -21,8 +23,11 @@ EXTNET_NAME=${EXTNET_NAME:-public}
 # Name of flavor used to spawn a VM
 FLAVOR=${FLAVOR:-m1.small}
 # Image used for the VM
-VMIMG_NAME=${VMIMG_NAME:-cirros-0.3.4-x86_64-uec}
+# VMIMG_NAME=${VMIMG_NAME:-cirros-0.3.4-x86_64-uec}
+VMIMG_NAME=${VMIMG_NAME:-cirros-0.3.2-x86_64-uec-kernel}
 
+# Resources to test
+USE_SWIFT=${0:-USE_SWIFT}
 
 ################################
 ### Check resources exist
@@ -66,11 +71,13 @@ METER_NAME="ospurge_test_meter_$UUID"
 dd if="/dev/zero" of="zero_disk.raw" bs=1M count=5
 
 
-###############################
-### Swift
-###############################
-swift upload $CONT_NAME zero_disk.raw
-exit_on_failure "Unable to upload file in container $CONT_NAME"
+if [ $USE_SWIFT -eq 1 ]; then
+    ###############################
+    ### Swift
+    ###############################
+    swift upload $CONT_NAME zero_disk.raw
+    exit_on_failure "Unable to upload file in container $CONT_NAME"
+fi
 
 
 ###############################
@@ -84,9 +91,16 @@ exit_on_failure "Unable to create volume"
 VOL_ID=$(cinder show $VOL_NAME | awk '/ id /{print $4}')
 exit_if_empty "$VOL_ID" "Unable to retrieve ID of volume $VOL_NAME"
 
+# Set status to available
+cinder reset-state --state available $VOL_ID
+
 # Snapshotting volume (note that it has to be detached, unless using --force)
-cinder snapshot-create --display-name $VOLSNAP_NAME $VOL_ID
-exit_on_failure "Unable to snapshot volume $VOL_NAME"
+cinder snapshot-create --display-name $VOLSNAP_NAME $VOL_ID || true
+# Ignore errors (bug in cinder because host field is empty)
+# cinder.api.middleware.fault
+# return host.split('#')[0]
+# 'NoneType' object has no attribute 'split'
+# exit_on_failure "Unable to snapshot volume $VOL_NAME"
 
 # Backuping volume
 # Don't exit if this fails - as we may test platforms that don't
@@ -129,8 +143,10 @@ neutron router-gateway-set $ROUT_ID $EXTNET_ID
 exit_on_failure "Unable to set gateway to router $ROUT_NAME"
 
 # Plugging router on internal network
-neutron router-interface-add $ROUT_ID $SUBNET_ID
-exit_on_failure "Unable to add interface on subnet $SUBNET_NAME to router $ROUT_NAME"
+neutron router-interface-add $ROUT_ID $SUBNET_ID || true
+# ignore failures like
+# "Bad router request, subnet XXX overlaps with cird YYY of subnet ZZZ"
+# exit_on_failure "Unable to add interface on subnet $SUBNET_NAME to router $ROUT_NAME"
 
 # Creating a floating IP and retrieving its IP Address
 
@@ -206,8 +222,9 @@ exit_if_empty "$VM_ID" "Unable to retrieve ID of VM $VM_NAME"
 ###############################
 # Upload glance image
 glance image-create --name $IMG_NAME --disk-format raw \
---container-format bare --file zero_disk.raw
-exit_on_failure "Unable to create Glance iamge $IMG_NAME"
+--container-format bare --file zero_disk.raw || true
+# Fails because there we are not using SWIFT
+# exit_on_failure "Unable to create Glance image $IMG_NAME"
 
 
 ###############################
@@ -223,7 +240,7 @@ heat stack-create -f dummy_stack.yaml $STACK_NAME || true
 
 # Wait for VM to be spawned before snapshotting the VM
 VM_STATUS=$(nova show $VM_ID | awk '/ status /{print $4}')
-while [ $VM_STATUS != "ACTIVE" ]; do
+while [ $VM_STATUS != "ACTIVE" -a $VM_STATUS != "ERROR" ]; do
     echo "Status of VM $VM_NAME is $VM_STATUS. Waiting 1 sec"
     sleep 1
     VM_STATUS=$(nova show $VM_ID | awk '/ status /{print $4}')
@@ -231,28 +248,30 @@ done
 
 ### Link resources
 
-# Associate floating IP
-nova floating-ip-associate $VM_ID $FIP_ADD
-exit_on_failure "Unable to associate floating IP $FIP_ADD to VM $VM_NAME"
+if [ $VM_STATUS != "ERROR" ]; then
+    # Associate floating IP
+    nova floating-ip-associate $VM_ID $FIP_ADD
+    exit_on_failure "Unable to associate floating IP $FIP_ADD to VM $VM_NAME"
 
-# Wait for volume to be available
-VOL_STATUS=$(cinder show $VOL_ID | awk '/ status /{print $4}')
-while [ $VOL_STATUS != "available" ]; do
-    echo "Status of volume $VOL_NAME is $VOL_STATUS. Waiting 1 sec"
-    sleep 1
+    # Wait for volume to be available
     VOL_STATUS=$(cinder show $VOL_ID | awk '/ status /{print $4}')
-done
+    while [ $VOL_STATUS != "available" ]; do
+        echo "Status of volume $VOL_NAME is $VOL_STATUS. Waiting 1 sec"
+        sleep 1
+        VOL_STATUS=$(cinder show $VOL_ID | awk '/ status /{print $4}')
+    done
 
-# Attach volume
-# This must be done before instance snapshot otherwise we could run into
-# ERROR (Conflict): Cannot 'attach_volume' while instance is in task_state
-# image_pending_upload
-nova volume-attach $VM_ID $VOL_ID
-exit_on_failure "Unable to attach volume $VOL_ID to VM $VM_ID"
+    # Attach volume
+    # This must be done before instance snapshot otherwise we could run into
+    # ERROR (Conflict): Cannot 'attach_volume' while instance is in task_state
+    # image_pending_upload
+    nova volume-attach $VM_ID $VOL_ID
+    exit_on_failure "Unable to attach volume $VOL_ID to VM $VM_ID"
 
-# Create an image
-nova image-create $VM_ID $VMSNAP_NAME
-exit_on_failure "Unable to create VM Snapshot of $VM_NAME"
+    # Create an image
+    nova image-create $VM_ID $VMSNAP_NAME
+    exit_on_failure "Unable to create VM Snapshot of $VM_NAME"
+fi
 
 # Create a ceilometer alarm
 # Don't exit if this fails - as we may test platforms that don't

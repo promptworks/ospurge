@@ -236,6 +236,61 @@ to the project will have been definitively deleted.
     $ ./ospurge --cleanup-project demo
     Project demo doesn't exist
 
+* Example using this fork (where 'url' is the endpoint-type):
+
+.. code-block:: console
+
+    $ ospurge --verbose --cleanup-project purgeme_746 --endpoint-type url
+
+    $ ospurge --cleanup-project=purgeme_130 --endpoint-type=url --verbose
+    INFO:root:* Granting role admin to user 53de9bfd6a6d4ce8ac6bd3ca576f2983 on project 6d72e53cebce4b529bf5af04c2db9e43.
+    INFO:root:* Purging CinderSnapshots
+    INFO:root:* Deleting snapshot (none) (id 552e1314-8d13-4eeb-820a-32870dac2045).
+    INFO:root:* Deletion failed - Retrying in 5 seconds - Retry count 1
+    INFO:root:* Deleting snapshot (none) (id 552e1314-8d13-4eeb-820a-32870dac2045).
+    INFO:root:* Deletion failed - Retrying in 5 seconds - Retry count 2
+    INFO:root:* Deleting snapshot (none) (id 552e1314-8d13-4eeb-820a-32870dac2045).
+    Deletion failed, but continuing on.
+    INFO:root:* Purging CinderBackups
+    INFO:root:* Purging NeutronFireWall
+    INFO:root:* Deleting Firewall ospurge_test_firewall_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id b7b69573-a4ad-45f6-8150-8f4a9adc313b).
+    INFO:root:* Purging NeutronFireWallPolicy
+    INFO:root:* Deleting Firewall policy ospurge_test_policy_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id d76a3264-98bb-40b8-95fb-d81cc7e64011).
+    INFO:root:* Deletion failed - Retrying in 5 seconds - Retry count 1
+    INFO:root:* Deleting Firewall policy ospurge_test_policy_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id d76a3264-98bb-40b8-95fb-d81cc7e64011).
+    INFO:root:* Purging NeutronFireWallRule
+    INFO:root:* Deleting Firewall rule ospurge_test_rule_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id 4a4b1c1f-0ae8-4d3e-935f-9f55ed7abb0e).
+    Skipping neutron resource
+    Skipping neutron resource
+    Skipping neutron resource
+    Skipping neutron resource
+    INFO:root:* Purging NovaServers
+    INFO:root:* Deleting server ospurge_test_vm_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id 66de6d01-f6de-4c43-94ef-4162f2972565).
+    INFO:root:* Purging NeutronFloatingIps
+    INFO:root:* Deleting floating ip 192.168.0.206 (id 56175347-ecfe-487d-b6f8-45bf22a6a90e).
+    INFO:root:* Purging NeutronMeteringLabel
+    INFO:root:* Deleting meter-label ospurge_test_meter_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id e096d2df-f187-4939-b766-73364787f1d6).
+    INFO:root:* Purging NeutronInterfaces
+    INFO:root:* Purging NeutronRouters
+    INFO:root:* Deleting router ospurge_test_rout_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id 17dc995c-0252-4ba4-bb30-b9b99727e62c).
+    INFO:root:* Purging NeutronPorts
+    INFO:root:* Deleting port  (id 7779bc2a-61e3-44f2-afc2-7e6a38f5885f).
+    INFO:root:* Purging NeutronNetworks
+    INFO:root:* Deleting network ospurge_test_net_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id 64a57c9b-fa82-4059-9056-399899df3794).
+    INFO:root:* Purging NeutronSecgroups
+    INFO:root:* Deleting security group ospurge_test_secgroup_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id aa5639ce-ff09-45c3-bf8d-323fb85bdd2d).
+    INFO:root:* Purging GlanceImages
+    INFO:root:* Deleting image ospurge_test_image_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8 (id f00fd42b-6750-4ac8-8b4d-bf759861d5e9).
+    INFO:root:* Purging SwiftObjects
+    INFO:root:* Purging SwiftContainers
+    INFO:root:* Purging CinderVolumes
+    INFO:root:* Deleting volume (none) (id c228b3fa-25c1-46c0-90fc-d09f95fcf42d).
+    INFO:root:* Purging CeilometerAlarms
+    INFO:root:* Deleting alarm ospurge_test_alarm_e0fca56c-84e7-43bb-b7c2-b150c11ef5f8.
+    INFO:root:* Purging HeatStacks
+    exception (continuing anyway): ERROR: Access was denied to this resource.
+    INFO:root:* Deleting project 6d72e53cebce4b529bf5af04c2db9e43.
+
 * Users can be deleted by using the ``python-openstackclient`` command-line
   interface:
 

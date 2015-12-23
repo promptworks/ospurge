@@ -22,7 +22,7 @@ import logging
 import time
 
 from keystoneclient import exceptions as api_exceptions
-from keystoneclient.v2_0 import client as keystone_client
+from keystoneclient.v3 import client as keystone_client
 
 from ospurge import constants
 from ospurge import exceptions
@@ -74,9 +74,11 @@ class Session(object):
     """
 
     def __init__(self, username, password, project_id, auth_url,
-                 endpoint_type="publicURL", region_name=None, insecure=False):
+                 endpoint_type="publicURL", region_name=None, insecure=False,
+                 domain_name=None):
         client = keystone_client.Client(
-            username=username, password=password, tenant_id=project_id,
+            username=username, password=password, # tenant_id=project_id,
+            domain_name=domain_name,
             auth_url=auth_url, region_name=region_name, insecure=insecure)
         # Storing username, password, project_id and auth_url for
         # use by clients libraries that cannot use an existing token.

@@ -8,3 +8,7 @@ dist/
 ospurge.egg-info/
 pbr-0.6-py2.7.egg/
 .tox
+.cache
+.venv
+dummy_stack.yaml
+zero_disk.raw
