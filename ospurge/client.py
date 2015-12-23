@@ -23,6 +23,39 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+#######################
+
+# # Get list of PTGs
+# #  - Remove the provided and consumed policy rule sets
+# #  - Delete the VMs
+#
+# ptgs = gbp.list_policy_target_groups()['policy_target_groups']
+# for ptg in ptgs:
+#     gbp.update_policy_target_group(ptg['id'],
+#                                    {'policy_target_group':
+#                                    {'provided_policy_rule_sets': {}}})
+#     gbp.update_policy_target_group(ptg['id'],
+#                                    {'policy_target_group':
+#                                    {'consumed_policy_rule_sets': {}}})
+#
+#     pts = gbp.list_policy_targets(
+#         policy_target_group_id=ptg['id'])['policy_targets']
+#     for pt in pts:
+#         vms_to_delete = []
+#         pt_ports = [x['port_id'] for x in pts]
+#         vms = nova.servers.list()
+#         for vm in vms:
+#             ports = neutron.list_ports(device_id=vm.id)['ports']
+#             for port in ports:
+#                 if port['id'] in pt_ports:
+#                     vms_to_delete.append(vm)
+#         gbp.delete_policy_target(pt['id'])
+#         for vm in vms_to_delete:
+#             nova.servers.delete(vm.id)
+#
+#     gbp.delete_policy_target_group(ptg['id'])
+#######################
+
 import argparse
 from distutils import version
 import logging
@@ -38,7 +71,7 @@ from glanceclient.v1 import client as glance_client
 from heatclient import client as heat_client
 import heatclient.openstack.common.apiclient.exceptions
 from keystoneclient import exceptions as api_exceptions
-from keystoneclient.v2_0 import client as keystone_client
+from keystoneclient.v3 import client as keystone_client
 import neutronclient.common.exceptions
 from neutronclient.v2_0 import client as neutron_client
 from novaclient import client as nova_client
@@ -563,30 +596,30 @@ class KeystoneManager(object):
             return self.client.tenant_id
 
         try:
-            self.tenant_info = self.client.tenants.get(project_name_or_id)
+            self.tenant_info = self.client.projects.get(project_name_or_id)
             # If it doesn't raise an 404, project_name_or_id is
             # already the project's id
             project_id = project_name_or_id
         except api_exceptions.NotFound:
             try:
                 # Can raise api_exceptions.Forbidden:
-                tenants = self.client.tenants.list()
+                projects = self.client.projects.list()
                 project_id = filter(
-                    lambda x: x.name == project_name_or_id, tenants)[0].id
+                    lambda x: x.name == project_name_or_id, projects)[0].id
             except IndexError:
                 raise exceptions.NoSuchProject(project_name_or_id)
 
         if not self.tenant_info:
-            self.tenant_info = self.client.tenants.get(project_id)
+            self.tenant_info = self.client.projects.get(project_id)
         return project_id
 
     def enable_project(self, project_id):
         logging.info("* Enabling project {}.".format(project_id))
-        self.tenant_info = self.client.tenants.update(project_id, enabled=True)
+        self.tenant_info = self.client.projects.update(project_id, enabled=True)
 
     def disable_project(self, project_id):
         logging.info("* Disabling project {}.".format(project_id))
-        self.tenant_info = self.client.tenants.update(project_id, enabled=False)
+        self.tenant_info = self.client.projects.update(project_id, enabled=False)
 
     def get_admin_role_id(self):
         if not self.admin_role_id:
@@ -612,7 +645,7 @@ class KeystoneManager(object):
 
     def delete_project(self, project_id):
         logging.info("* Deleting project {}.".format(project_id))
-        self.client.tenants.delete(project_id)
+        self.client.projects.delete(project_id)
 
 
 def perform_on_project(admin_name, password, project, auth_url,
