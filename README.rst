@@ -236,11 +236,14 @@ to the project will have been definitively deleted.
     $ ./ospurge --cleanup-project demo
     Project demo doesn't exist
 
-* Example using this fork (where 'url' is the endpoint-type):
+Domain support
+--------------
+
+* This fork supports domains, an experimental feature of recent
+  releases of keystone.  Here's an example using this fork (where
+  'url' is the endpoint-type):
 
 .. code-block:: console
-
-    $ ospurge --verbose --cleanup-project purgeme_746 --endpoint-type url
 
     $ ospurge --cleanup-project=purgeme_130 --endpoint-type=url --verbose
     INFO:root:* Granting role admin to user 53de9bfd6a6d4ce8ac6bd3ca576f2983 on project 6d72e53cebce4b529bf5af04c2db9e43.
